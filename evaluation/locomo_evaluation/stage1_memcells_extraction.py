@@ -42,15 +42,29 @@ from src.memory_layer.memcell_extractor.conv_memcell_extractor import (
     ConvMemCellExtractor,
     ConversationMemCellExtractRequest,
 )
-from src.memory_layer.memory_extractor.episode_memory_extractor_locomo import (
+from src.memory_layer.memory_extractor.episode_memory_extractor import (
     EpisodeMemoryExtractRequest,
     EpisodeMemoryExtractor,
 )
 from src.memory_layer.memory_extractor.event_log_extractor import EventLogExtractor
 from src.memory_layer.types import RawDataType
 
+# 新增：聚类和 Profile 管理组件
+from src.memory_layer.cluster_manager import (
+    ClusterManager,
+    ClusterManagerConfig,
+    InMemoryClusterStorage,
+)
+from src.memory_layer.profile_manager import (
+    ProfileManager,
+    ProfileManagerConfig,
+    ScenarioType,
+    InMemoryProfileStorage,
+)
+
 from evaluation.locomo_evaluation.config import ExperimentConfig
 from datetime import datetime, timedelta
+from pathlib import Path
 
 
 def parse_locomo_timestamp(timestamp_str: str) -> datetime:
@@ -66,6 +80,7 @@ def raw_data_load(locomo_data_path: str) -> Dict[str, List[RawData]]:
 
     # data = [data[2]]
     # data = [data[0], data[1], data[2]]
+    data = [data[0]]
     raw_data_dict = {}
 
     conversations = [data[i]['conversation'] for i in range(len(data))]
@@ -130,6 +145,7 @@ def raw_data_load(locomo_data_path: str) -> Dict[str, List[RawData]]:
                         if optional_field in msg:
                             message[optional_field] = msg[optional_field]
                     messages.append(message)
+            messages = messages[:100]
         raw_data_dict[str(con_id)] = messages
 
         print(
@@ -154,6 +170,7 @@ async def memcell_extraction_from_conversation(
     conv_id: str = None,  # 添加会话ID用于进度条描述
     progress: Progress = None,  # 添加进度条对象
     task_id: int = None,  # 添加任务ID
+    use_semantic_extraction: bool = False,  # 新增：是否启用语义记忆提取
 ) -> list:
 
     episode_extractor = EpisodeMemoryExtractor(llm_provider=llm_provider)
@@ -194,7 +211,10 @@ async def memcell_extraction_from_conversation(
         )
         for i in range(5):
             try:
-                result = await memcell_extractor.extract_memcell(request)
+                result = await memcell_extractor.extract_memcell(
+                    request,
+                    use_semantic_extraction=use_semantic_extraction  # 传递开关
+                )
                 break
             except Exception as e:
                 print('retry: ', i)
@@ -261,12 +281,13 @@ async def process_single_conversation(
     conversation: list,
     save_dir: str,
     llm_provider: LLMProvider = None,
-    event_log_extractor: EventLogExtractor = None,  # 添加event_log_extractor参数
-    progress_counter: dict = None,  # 添加进度计数器
-    progress: Progress = None,  # 添加进度条对象
-    task_id: int = None,  # 添加任务ID
+    event_log_extractor: EventLogExtractor = None,
+    progress_counter: dict = None,
+    progress: Progress = None,
+    task_id: int = None,
+    config: ExperimentConfig = None,  # 新增：传入配置
 ) -> tuple:
-    """处理单个会话并返回结果
+    """处理单个会话并返回结果（新增：聚类和 Profile 提取）
 
     Args:
         conv_id: 会话ID
@@ -276,6 +297,7 @@ async def process_single_conversation(
         event_log_extractor: 事件日志提取器实例
         progress: 进度条对象
         task_id: 进度任务ID
+        config: 实验配置（用于读取开关）
 
     Returns:
         tuple: (conv_id, memcell_list)
@@ -285,15 +307,73 @@ async def process_single_conversation(
         if progress and task_id is not None:
             progress.update(task_id, status="处理中")
 
+        # ===== 根据配置创建组件 =====
+        cluster_mgr = None
+        profile_mgr = None
+        
+        # 创建 MemCellExtractor
         raw_data_list = convert_conversation_to_raw_data_list(conversation)
         memcell_extractor = ConvMemCellExtractor(llm_provider=llm_provider)
+        
+        # 条件创建：聚类管理器（每个对话独立）
+        if config and config.enable_clustering:
+            cluster_storage = InMemoryClusterStorage(
+                enable_persistence=True,
+                persist_dir=Path(save_dir) / "clusters" / f"conv_{conv_id}"
+            )
+            cluster_config = ClusterManagerConfig(
+                similarity_threshold=config.cluster_similarity_threshold,
+                max_time_gap_days=config.cluster_max_time_gap_days,
+                enable_persistence=True,
+                persist_dir=str(Path(save_dir) / "clusters" / f"conv_{conv_id}"),
+                clustering_algorithm="centroid"
+            )
+            cluster_mgr = ClusterManager(config=cluster_config, storage=cluster_storage)
+            cluster_mgr.attach_to_extractor(memcell_extractor)
+        
+        # 条件创建：Profile 管理器
+        if config and config.enable_profile_extraction and cluster_mgr:
+            profile_storage = InMemoryProfileStorage(
+                enable_persistence=True,
+                persist_dir=Path(save_dir) / "profiles" / f"conv_{conv_id}",
+                enable_versioning=True
+            )
+            
+            # 动态设置场景类型
+            scenario = ScenarioType.ASSISTANT if config.profile_scenario.lower() == "assistant" else ScenarioType.GROUP_CHAT
+            
+            profile_config = ProfileManagerConfig(
+                scenario=scenario,
+                min_confidence=config.profile_min_confidence,
+                enable_versioning=True,
+                auto_extract=True,
+                batch_size=50,
+            )
+            
+            profile_mgr = ProfileManager(
+                llm_provider=llm_provider,
+                config=profile_config,
+                storage=profile_storage,
+                group_id=f"locomo_conv_{conv_id}",
+                group_name=f"LoComo Conversation {conv_id}"
+            )
+            
+            # 设置最小 MemCells 阈值
+            profile_mgr._min_memcells_threshold = config.profile_min_memcells
+            
+            # 连接组件
+            profile_mgr.attach_to_cluster_manager(cluster_mgr)
+        
+        # 提取 MemCells（根据配置决定是否启用语义记忆）
+        use_semantic = config.enable_semantic_extraction if config else False
         memcell_list = await memcell_extraction_from_conversation(
             raw_data_list,
             llm_provider=llm_provider,
             memcell_extractor=memcell_extractor,
-            conv_id=conv_id,  # 传递会话ID
-            progress=progress,  # 传递进度条对象
-            task_id=task_id,  # 传递任务ID
+            conv_id=conv_id,
+            progress=progress,
+            task_id=task_id,
+            use_semantic_extraction=use_semantic,  # 传递语义记忆开关
         )
         # print(f"   ✅ 会话 {conv_id}: {len(memcell_list)} memcells extracted")  # 注释掉避免干扰进度条
 
@@ -367,10 +447,51 @@ async def process_single_conversation(
             memcell_dicts.append(memcell_dict)
 
         memcell_dicts = [memcell_dict for memcell_dict in memcell_dicts]
-        print(memcell_dicts)
+        # print(memcell_dicts)  # 注释掉大量输出
         output_file = os.path.join(save_dir, f"memcell_list_conv_{conv_id}.json")
         with open(output_file, "w") as f:
             json.dump(memcell_dicts, f, ensure_ascii=False, indent=2)
+
+        # ===== 条件导出：聚类和 Profile 结果 =====
+        cluster_stats = {}
+        profile_stats = {}
+        profile_count = 0
+        
+        if cluster_mgr or profile_mgr:
+            await asyncio.sleep(2)  # 给异步任务时间完成
+        
+        # 导出聚类结果（如果启用）
+        if cluster_mgr:
+            cluster_output_dir = Path(save_dir) / "clusters" / f"conv_{conv_id}"
+            cluster_output_dir.mkdir(parents=True, exist_ok=True)
+            await cluster_mgr.export_clusters(cluster_output_dir)
+            cluster_stats = cluster_mgr.get_stats()
+        
+        # 导出 Profiles（如果启用）
+        if profile_mgr:
+            profile_output_dir = Path(save_dir) / "profiles" / f"conv_{conv_id}"
+            profile_count = await profile_mgr.export_profiles(profile_output_dir, include_history=True)
+            profile_stats = profile_mgr.get_stats()
+        
+        # 保存统计信息
+        stats_output = {
+            "conv_id": conv_id,
+            "memcells": len(memcell_list),
+            "clustering_enabled": config.enable_clustering if config else False,
+            "profile_enabled": config.enable_profile_extraction if config else False,
+            "semantic_enabled": config.enable_semantic_extraction if config else False,
+        }
+        
+        if cluster_stats:
+            stats_output["clustering"] = cluster_stats
+        if profile_stats:
+            stats_output["profiles"] = profile_stats
+            stats_output["profile_count"] = profile_count
+        
+        stats_file = Path(save_dir) / "stats" / f"conv_{conv_id}_stats.json"
+        stats_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(stats_file, "w") as f:
+            json.dump(stats_output, f, ensure_ascii=False, indent=2)
 
         # 更新进度（静默，避免干扰进度条）
         if progress_counter:
@@ -412,6 +533,32 @@ async def main():
     save_dir = os.path.join(CURRENT_DIR, "results", config.experiment_name, "memcells")
 
     console = Console()
+    
+    # 打印配置信息
+    console.print("\n" + "=" * 60, style="bold cyan")
+    console.print("实验配置", style="bold cyan")
+    console.print("=" * 60, style="bold cyan")
+    console.print(f"实验名称: {config.experiment_name}", style="cyan")
+    console.print(f"数据路径: {config.datase_path}", style="cyan")
+    console.print(f"\n功能开关:", style="bold yellow")
+    console.print(f"  - 语义记忆提取: {'✅ 启用' if config.enable_semantic_extraction else '❌ 禁用'}", 
+                  style="green" if config.enable_semantic_extraction else "dim")
+    console.print(f"  - 聚类: {'✅ 启用' if config.enable_clustering else '❌ 禁用'}", 
+                  style="green" if config.enable_clustering else "dim")
+    console.print(f"  - Profile 提取: {'✅ 启用' if config.enable_profile_extraction else '❌ 禁用'}", 
+                  style="green" if config.enable_profile_extraction else "dim")
+    
+    if config.enable_clustering:
+        console.print(f"\n聚类配置:", style="bold")
+        console.print(f"  - 相似度阈值: {config.cluster_similarity_threshold}", style="dim")
+        console.print(f"  - 最大时间间隔: {config.cluster_max_time_gap_days} 天", style="dim")
+    
+    if config.enable_profile_extraction:
+        console.print(f"\nProfile 配置:", style="bold")
+        console.print(f"  - 场景: {config.profile_scenario}", style="dim")
+        console.print(f"  - 最小置信度: {config.profile_min_confidence}", style="dim")
+        console.print(f"  - 最小 MemCells: {config.profile_min_memcells}", style="dim")
+    console.print("=" * 60 + "\n", style="bold cyan")
     
     # 🔥 断点续传：检查已完成的对话
     completed_convs = set()
@@ -528,10 +675,11 @@ async def main():
                 conversation,
                 save_dir,
                 llm_provider=shared_llm_provider,
-                event_log_extractor=shared_event_log_extractor,  # 传递event_log_extractor
+                event_log_extractor=shared_event_log_extractor,
                 progress_counter=progress_counter,
                 progress=progress,
                 task_id=conv_task_id,
+                config=config,  # 传入配置
             )
             updated_tasks.append(task)
 
@@ -591,21 +739,59 @@ async def main():
         json.dump(all_memcells_dicts, f, ensure_ascii=False, indent=2)
     console.print(f"\n💾 汇总结果已保存到: {summary_file}", style="green")
 
-    # 保存处理摘要
+    # ===== 新增：汇总聚类和 Profile 统计 =====
+    # 统计所有会话的聚类和 Profile 信息
+    total_clusters = 0
+    total_profiles = 0
+    cluster_stats_list = []
+    profile_stats_list = []
+    
+    stats_dir = Path(save_dir) / "stats"
+    if stats_dir.exists():
+        for stats_file in stats_dir.glob("conv_*_stats.json"):
+            try:
+                with open(stats_file) as f:
+                    conv_stats = json.load(f)
+                total_clusters += conv_stats.get("clustering", {}).get("total_clusters", 0)
+                total_profiles += conv_stats.get("profile_count", 0)
+                cluster_stats_list.append(conv_stats.get("clustering", {}))
+                profile_stats_list.append(conv_stats.get("profiles", {}))
+            except Exception:
+                pass
+    
+    # 保存处理摘要（新增聚类和 Profile 统计）
     summary = {
         "total_conversations": len(raw_data_dict),
         "successful_conversations": successful_convs,
         "total_memcells": len(all_memcells),
+        "total_clusters": total_clusters,
+        "total_profiles": total_profiles,
         "processing_time_seconds": end_time - start_time,
         "average_time_per_conversation": (end_time - start_time) / len(raw_data_dict),
         "conversation_results": {
             conv_id: len(memcell_list) for conv_id, memcell_list in results
         },
+        "clustering_summary": {
+            "total_clusters": total_clusters,
+            "avg_clusters_per_conv": total_clusters / successful_convs if successful_convs > 0 else 0,
+        },
+        "profile_summary": {
+            "total_profiles": total_profiles,
+            "avg_profiles_per_conv": total_profiles / successful_convs if successful_convs > 0 else 0,
+        },
     }
     summary_info_file = os.path.join(save_dir, "processing_summary.json")
     with open(summary_info_file, "w") as f:
         json.dump(summary, f, ensure_ascii=False, indent=2)
-    console.print(f"📊 处理摘要已保存到: {summary_info_file}\n", style="green")
+    console.print(f"📊 处理摘要已保存到: {summary_info_file}", style="green")
+    
+    # 打印聚类和 Profile 统计
+    console.print(f"\n📊 聚类统计:", style="bold cyan")
+    console.print(f"   - 总聚类数: {total_clusters}", style="cyan")
+    console.print(f"   - 平均每会话: {total_clusters / successful_convs if successful_convs > 0 else 0:.1f}", style="cyan")
+    console.print(f"\n👤 Profile 统计:", style="bold green")
+    console.print(f"   - 总 Profiles: {total_profiles}", style="green")
+    console.print(f"   - 平均每会话: {total_profiles / successful_convs if successful_convs > 0 else 0:.1f}\n", style="green")
 
 
 if __name__ == "__main__":

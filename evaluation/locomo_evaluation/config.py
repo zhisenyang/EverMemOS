@@ -13,6 +13,20 @@ class ExperimentConfig:
     use_multi_query: bool = True  #  启用多查询生成
     num_conv: int = 10
     
+    # 🔥 新增：MemCell 提取功能开关
+    enable_semantic_extraction: bool = True  # 是否启用语义记忆提取
+    enable_clustering: bool = True            # 是否启用聚类
+    enable_profile_extraction: bool = True    # 是否启用 Profile 提取
+    
+    # 🔥 聚类配置
+    cluster_similarity_threshold: float = 0.65  # 聚类相似度阈值
+    cluster_max_time_gap_days: float = 7.0     # 聚类最大时间间隔（天）
+    
+    # 🔥 Profile 配置
+    profile_scenario: str = "assistant"       # Profile 场景：group_chat 或 assistant
+    profile_min_confidence: float = 0.6        # Profile 价值判别阈值
+    profile_min_memcells: int = 1              # Profile 提取最小 MemCells 数量
+    
     # 🔥 检索模式选择：'agentic' 或 'lightweight'
     # - agentic: 复杂的多轮检索，LLM引导，质量高但速度慢
     # - lightweight: 快速混合检索，BM25+Embedding混排，速度快但质量略低
