@@ -4,6 +4,7 @@ import sys
 import pickle
 from pathlib import Path
 from typing import List, Tuple, Optional
+import time
 
 import nltk
 import numpy as np
@@ -11,6 +12,7 @@ from nltk.corpus import stopwords
 from nltk.stem import PorterStemmer
 from nltk.tokenize import word_tokenize
 import asyncio
+from tqdm import tqdm
 
 # Ensure project root is on sys.path so `evaluation` can be imported when running directly
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -326,6 +328,94 @@ def multi_rrf_fusion(
     fused_results = [(doc_map[doc_id], rrf_score) for doc_id, rrf_score in sorted_docs]
     
     return fused_results
+
+
+async def lightweight_retrieval(
+    query: str,
+    emb_index,
+    bm25,
+    docs,
+    config: ExperimentConfig,
+) -> Tuple[List[Tuple[dict, float]], dict]:
+    """
+    轻量级快速检索（无 LLM 调用，纯算法检索）
+    
+    流程：
+    1. 并行执行 Embedding 和 BM25 检索
+    2. 各取 Top-50 候选
+    3. 使用 RRF 融合
+    4. 返回 Top-20 结果
+    
+    优势：
+    - 速度快：无 LLM 调用，纯向量/词法检索
+    - 成本低：不消耗 LLM API 费用
+    - 稳定：无网络依赖，纯本地计算
+    
+    适用场景：
+    - 对延迟敏感的场景
+    - 预算有限的场景
+    - 查询简单明确的场景
+    
+    Args:
+        query: 用户查询
+        emb_index: Embedding 索引
+        bm25: BM25 索引
+        docs: 文档列表
+        config: 实验配置
+    
+    Returns:
+        (final_results, metadata)
+    """
+    start_time = time.time()
+    
+    metadata = {
+        "retrieval_mode": "lightweight",
+        "emb_count": 0,
+        "bm25_count": 0,
+        "final_count": 0,
+        "total_latency_ms": 0.0,
+    }
+    
+    # ========== 并行执行 Embedding 和 BM25 检索 ==========
+    emb_task = search_with_emb_index(
+        query, 
+        emb_index, 
+        top_n=config.lightweight_emb_top_n  # 默认 50
+    )
+    bm25_task = asyncio.to_thread(
+        search_with_bm25_index, 
+        query, 
+        bm25, 
+        docs, 
+        config.lightweight_bm25_top_n  # 默认 50
+    )
+    
+    emb_results, bm25_results = await asyncio.gather(emb_task, bm25_task)
+    
+    metadata["emb_count"] = len(emb_results)
+    metadata["bm25_count"] = len(bm25_results)
+    
+    # ========== RRF 融合 ==========
+    if not emb_results and not bm25_results:
+        metadata["total_latency_ms"] = (time.time() - start_time) * 1000
+        return [], metadata
+    elif not emb_results:
+        final_results = bm25_results[:config.lightweight_final_top_n]
+    elif not bm25_results:
+        final_results = emb_results[:config.lightweight_final_top_n]
+    else:
+        # 使用 RRF 融合
+        fused_results = reciprocal_rank_fusion(
+            emb_results, 
+            bm25_results, 
+            k=60  # 标准 RRF 参数
+        )
+        final_results = fused_results[:config.lightweight_final_top_n]  # 默认 20
+    
+    metadata["final_count"] = len(final_results)
+    metadata["total_latency_ms"] = (time.time() - start_time) * 1000
+    
+    return final_results, metadata
 
 
 async def search_with_emb_index(
@@ -1139,19 +1229,24 @@ async def main():
             print(f"  🚀 Agentic retrieval enabled with HIGH CONCURRENCY: {max_concurrent} concurrent requests")
 
         async def process_single_qa(qa_pair):
+            """处理单个 QA 对（支持多种检索模式）"""
             question = qa_pair.get("question")
             if not question:
                 return None
             if qa_pair.get("category") == 5:
                 print(f"Skipping question {question} because it is category 5")
                 return None
+            
+            # 开始计时
+            qa_start_time = time.time()
+            
             try:
                 async with sem:
-                    # 🔥 新增：Agentic 检索分支
                     retrieval_metadata = {}
                     
-                    if config.use_agentic_retrieval:
-                        # ========== Agentic 多轮检索 ==========
+                    # ========== 检索模式选择 ==========
+                    if config.retrieval_mode == "agentic":
+                        # 🔥 Agentic 多轮检索（复杂但质量高）
                         top_results, retrieval_metadata = await agentic_retrieval(
                             query=question,
                             config=config,
@@ -1162,91 +1257,105 @@ async def main():
                             docs=docs,
                         )
                     
-                    # 🔥 传统检索分支（保持原有逻辑）
-                    elif config.use_reranker:
-                        # 第一阶段：初步检索，召回 Top-N 候选
-                        if config.use_hybrid_search:
-                            # 🔥 混合检索：Embedding (MaxSim) + BM25 + RRF 融合
-                            # 这是当前最优的检索策略，结合语义匹配和精确匹配
-                            results = await hybrid_search_with_rrf(
-                                query=question,
-                                emb_index=emb_index,
-                                bm25=bm25,
-                                docs=docs,
-                                top_n=config.emb_recall_top_n,  # 返回 Top-40
-                                emb_candidates=config.hybrid_emb_candidates,  # Embedding 召回 100
-                                bm25_candidates=config.hybrid_bm25_candidates,  # BM25 召回 100
-                                rrf_k=config.hybrid_rrf_k  # RRF 参数 k=60
-                            )
-                        elif config.use_emb:
-                            # 单独使用 Embedding + MaxSim 检索
-                            results = await search_with_emb_index(
-                                query=question, 
-                                emb_index=emb_index, 
-                                top_n=config.emb_recall_top_n  # 召回 Top-40
-                            )
-                        else:
-                            # 单独使用 BM25 检索
-                            results = await asyncio.to_thread(
-                                search_with_bm25_index, 
-                                question, 
-                                bm25, 
-                                docs, 
-                                config.emb_recall_top_n  # 召回 Top-40
-                            )
-                        
-                        # 第二阶段：Reranker 重排序，返回 Top-20 用于最终输出
-                        top_results = await reranker_search(
+                    elif config.retrieval_mode == "lightweight":
+                        # 🔥 轻量级快速检索（快速但质量略低）
+                        top_results, retrieval_metadata = await lightweight_retrieval(
                             query=question,
-                            results=results,
-                            top_n=config.reranker_top_n,  # 🔥 使用配置：20
-                            reranker_instruction=config.reranker_instruction,
-                            batch_size=config.reranker_batch_size,  # 🔥 批次大小
-                            max_retries=config.reranker_max_retries,
-                            retry_delay=config.reranker_retry_delay,
-                            timeout=config.reranker_timeout,
-                            fallback_threshold=config.reranker_fallback_threshold,
-                            config=config,  # 🔥 传入配置
+                            emb_index=emb_index,
+                            bm25=bm25,
+                            docs=docs,
+                            config=config,
                         )
+                    
                     else:
-                        # 单阶段检索（不使用 Reranker）
-                        if config.use_hybrid_search:
-                            # 混合检索
-                            top_results = await hybrid_search_with_rrf(
+                        # 🔥 传统检索分支（保持向后兼容）
+                        if config.use_reranker:
+                            # 第一阶段：初步检索，召回 Top-N 候选
+                            if config.use_hybrid_search:
+                                # 混合检索：Embedding (MaxSim) + BM25 + RRF 融合
+                                results = await hybrid_search_with_rrf(
+                                    query=question,
+                                    emb_index=emb_index,
+                                    bm25=bm25,
+                                    docs=docs,
+                                    top_n=config.emb_recall_top_n,
+                                    emb_candidates=config.hybrid_emb_candidates,
+                                    bm25_candidates=config.hybrid_bm25_candidates,
+                                    rrf_k=config.hybrid_rrf_k
+                                )
+                            elif config.use_emb:
+                                # 单独使用 Embedding + MaxSim 检索
+                                results = await search_with_emb_index(
+                                    query=question, 
+                                    emb_index=emb_index, 
+                                    top_n=config.emb_recall_top_n
+                                )
+                            else:
+                                # 单独使用 BM25 检索
+                                results = await asyncio.to_thread(
+                                    search_with_bm25_index, 
+                                    question, 
+                                    bm25, 
+                                    docs, 
+                                    config.emb_recall_top_n
+                                )
+                            
+                            # 第二阶段：Reranker 重排序
+                            top_results = await reranker_search(
                                 query=question,
-                                emb_index=emb_index,
-                                bm25=bm25,
-                                docs=docs,
-                                top_n=20,
-                                emb_candidates=config.hybrid_emb_candidates,
-                                bm25_candidates=config.hybrid_bm25_candidates,
-                                rrf_k=config.hybrid_rrf_k
-                            )
-                        elif config.use_emb:
-                            # Embedding 检索
-                            top_results = await search_with_emb_index(
-                                query=question, emb_index=emb_index, top_n=20
+                                results=results,
+                                top_n=config.reranker_top_n,
+                                reranker_instruction=config.reranker_instruction,
+                                batch_size=config.reranker_batch_size,
+                                max_retries=config.reranker_max_retries,
+                                retry_delay=config.reranker_retry_delay,
+                                timeout=config.reranker_timeout,
+                                fallback_threshold=config.reranker_fallback_threshold,
+                                config=config,
                             )
                         else:
-                            # BM25 检索
-                            top_results = await asyncio.to_thread(
-                                search_with_bm25_index, question, bm25, docs, 20
-                            )
+                            # 单阶段检索（不使用 Reranker）
+                            if config.use_hybrid_search:
+                                top_results = await hybrid_search_with_rrf(
+                                    query=question,
+                                    emb_index=emb_index,
+                                    bm25=bm25,
+                                    docs=docs,
+                                    top_n=20,
+                                    emb_candidates=config.hybrid_emb_candidates,
+                                    bm25_candidates=config.hybrid_bm25_candidates,
+                                    rrf_k=config.hybrid_rrf_k
+                                )
+                            elif config.use_emb:
+                                top_results = await search_with_emb_index(
+                                    query=question, emb_index=emb_index, top_n=20
+                                )
+                            else:
+                                top_results = await asyncio.to_thread(
+                                    search_with_bm25_index, question, bm25, docs, 20
+                                )
+                        
+                        # 添加检索时间统计
+                        retrieval_metadata = {
+                            "retrieval_mode": "traditional",
+                            "use_reranker": config.use_reranker,
+                            "use_hybrid_search": config.use_hybrid_search,
+                        }
 
-                    # 🔥 格式化最终 context（使用 Episode Memory 格式）
+                    # ========== 格式化最终 context ==========
                     context_str = ""
                     if top_results:
                         retrieved_docs_text = []
                         for doc, score in top_results:
-                            # 🔥 使用 Episode Memory 格式（完整叙述）
                             subject = doc.get('subject', 'N/A')
                             episode = doc.get('episode', 'N/A')
-                            
                             doc_text = f"{subject}: {episode}\n---"
                             retrieved_docs_text.append(doc_text)
-                        
                         context_str = "\n\n".join(retrieved_docs_text)
 
+                    # 计算处理时间
+                    qa_latency_ms = (time.time() - qa_start_time) * 1000
+                    
                     result = {
                         "query": question,
                         "context": TEMPLATE.format(
@@ -1254,17 +1363,19 @@ async def main():
                             speaker_2=speaker_b,
                             speaker_memories=context_str,
                         ),
-                        # Adding original QA pair for easier evaluation if needed
                         "original_qa": qa_pair,
+                        "retrieval_metadata": {
+                            **retrieval_metadata,
+                            "qa_latency_ms": qa_latency_ms,
+                        }
                     }
                     
-                    # 🔥 添加 agentic 检索的元数据（如果使用）
-                    if retrieval_metadata:
-                        result["agentic_metadata"] = retrieval_metadata
-                    
                     return result
+                    
             except Exception as e:
                 print(f"Error processing question '{question}': {e}")
+                import traceback
+                traceback.print_exc()
                 return None
 
         tasks = [

@@ -14,10 +14,20 @@ class ExperimentConfig:
     use_multi_query: bool = True  #  启用多查询生成
     num_conv: int = 10
     
+    # 🔥 检索模式选择：'agentic' 或 'lightweight'
+    # - agentic: 复杂的多轮检索，LLM引导，质量高但速度慢
+    # - lightweight: 快速混合检索，BM25+Embedding混排，速度快但质量略低
+    retrieval_mode: str = "agentic"  # 'agentic' | 'lightweight'
+    
     #  检索配置
     use_hybrid_search: bool = True  # 是否使用混合检索（Embedding + BM25 + RRF）
     emb_recall_top_n: int = 40      # Embedding/混合检索召回数量
     reranker_top_n: int = 20        # Reranker 重排序返回数量
+    
+    # 轻量级检索参数（仅在 retrieval_mode='lightweight' 时生效）
+    lightweight_bm25_top_n: int = 50   # BM25 召回数量
+    lightweight_emb_top_n: int = 50    # Embedding 召回数量
+    lightweight_final_top_n: int = 20  # 混排后最终返回数量
     
     # 混合检索参数（仅在 use_hybrid_search=True 时生效）
     hybrid_emb_candidates: int = 50   # Embedding 候选数量
