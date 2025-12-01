@@ -28,7 +28,7 @@ def setup_dependency_injection(addons: list = None):
     logger.info("🚀 正在初始化依赖注入容器...")
 
     # 导入以触发自动替换Bean排序策略（模块加载时执行）
-    from core.addons.contrib import addon_bean_order_strategy  # noqa: F401
+    from core.addons.addonize import addon_bean_order_strategy  # noqa: F401
 
     # 创建组件扫描器
     scanner = ComponentScanner()
