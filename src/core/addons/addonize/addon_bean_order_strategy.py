@@ -16,6 +16,7 @@ import os
 from typing import List, Tuple, Set, Type, Dict
 from core.di.bean_definition import BeanDefinition, BeanScope
 from core.di.bean_order_strategy import BeanOrderStrategy
+from core.di.container import DIContainer
 from core.observation.logger import get_logger
 
 logger = get_logger(__name__)
@@ -38,7 +39,7 @@ class AddonBeanOrderStrategy(BeanOrderStrategy):
     _addon_priority_map: Dict[str, int] = None
 
     @classmethod
-    def _load_addon_priority_map(cls) -> Dict[str, int]:
+    def load_addon_priority_map(cls) -> Dict[str, int]:
         """
         从环境变量加载addon优先级配置
 
@@ -77,7 +78,7 @@ class AddonBeanOrderStrategy(BeanOrderStrategy):
             int: addon优先级值，数值越小优先级越高
             如果没有配置addon_tag或未在配置中找到，返回默认值99999（最低优先级）
         """
-        priority_map = cls._load_addon_priority_map()
+        priority_map = cls.load_addon_priority_map()
 
         # 从Bean的metadata中获取addon_tag
         addon_tag = bean_def.metadata.get("addon_tag")
@@ -181,15 +182,13 @@ class AddonBeanOrderStrategy(BeanOrderStrategy):
 def _replace_strategy():
     """自动替换Bean排序策略"""
     try:
-        from core.di.container import DIContainer
-
         DIContainer.replace_bean_order_strategy(AddonBeanOrderStrategy)
         logger.warning(
             "⚠️ Bean排序策略已自动替换为 AddonBeanOrderStrategy，支持 addon_tag 优先级"
         )
         logger.info(
             "  📌 Addon优先级配置: %s (环境变量: ADDON_PRIORITY)",
-            AddonBeanOrderStrategy._load_addon_priority_map(),
+            AddonBeanOrderStrategy.load_addon_priority_map(),
         )
     except Exception as e:
         logger.error("替换Bean排序策略失败: %s", e)

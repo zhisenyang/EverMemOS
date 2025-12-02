@@ -12,7 +12,7 @@ import os
 import pytest
 from typing import Set, Type
 from core.di.bean_definition import BeanDefinition, BeanScope
-from core.addons.contrib.addon_bean_order_strategy import AddonBeanOrderStrategy
+from core.addons.addonize.addon_bean_order_strategy import AddonBeanOrderStrategy
 
 
 # ==================== 测试辅助类 ====================
@@ -61,7 +61,7 @@ class TestAddonPriorityConfiguration:
     def test_load_default_priority_map(self):
         """测试加载默认的优先级配置"""
         # 不设置环境变量，应使用默认配置
-        priority_map = AddonBeanOrderStrategy._load_addon_priority_map()
+        priority_map = AddonBeanOrderStrategy.load_addon_priority_map()
 
         # 验证默认配置：core:1000,enterprise:50
         assert "core" in priority_map
@@ -76,7 +76,7 @@ class TestAddonPriorityConfiguration:
 
         # 重新加载
         AddonBeanOrderStrategy._addon_priority_map = None
-        priority_map = AddonBeanOrderStrategy._load_addon_priority_map()
+        priority_map = AddonBeanOrderStrategy.load_addon_priority_map()
 
         # 验证配置
         assert priority_map["addon1"] == 100
@@ -86,10 +86,10 @@ class TestAddonPriorityConfiguration:
     def test_priority_map_caching(self):
         """测试优先级配置的缓存机制"""
         # 第一次加载
-        priority_map1 = AddonBeanOrderStrategy._load_addon_priority_map()
+        priority_map1 = AddonBeanOrderStrategy.load_addon_priority_map()
 
         # 第二次加载（应该从缓存返回）
-        priority_map2 = AddonBeanOrderStrategy._load_addon_priority_map()
+        priority_map2 = AddonBeanOrderStrategy.load_addon_priority_map()
 
         # 应该是同一个对象
         assert priority_map1 is priority_map2
@@ -101,7 +101,7 @@ class TestAddonPriorityConfiguration:
 
         # 重新加载
         AddonBeanOrderStrategy._addon_priority_map = None
-        priority_map = AddonBeanOrderStrategy._load_addon_priority_map()
+        priority_map = AddonBeanOrderStrategy.load_addon_priority_map()
 
         # 验证：有效的配置被加载，无效的被忽略
         assert priority_map["valid"] == 100
@@ -115,7 +115,7 @@ class TestAddonPriorityConfiguration:
 
         # 重新加载
         AddonBeanOrderStrategy._addon_priority_map = None
-        priority_map = AddonBeanOrderStrategy._load_addon_priority_map()
+        priority_map = AddonBeanOrderStrategy.load_addon_priority_map()
 
         # 验证：空格被正确处理
         assert priority_map["addon1"] == 100
