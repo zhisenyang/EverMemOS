@@ -106,7 +106,7 @@ class MemoryExtractor:
         print(f"\n✓ 场景类型: {self.config.scenario_type.value}")
         print(f"✓ 语言: {self.config.prompt_language}")
         print(f"✓ 群组 ID: {self.config.group_id}")
-        print(f"✓ 语义提取: {self.config.enable_semantic_extraction}")
+        print(f"✓ 前瞻提取: {self.config.enable_foresight_extraction}")
         print(f"\n开始处理 {len(events)} 条消息...\n")
         
         history: List[RawData] = []
@@ -147,7 +147,7 @@ class MemoryExtractor:
                 user_id_list=["default"],
                 group_id=self.config.group_id,
                 group_name=self.config.group_name,
-                enable_semantic_extraction=self.config.enable_semantic_extraction or False,
+                enable_foresight_extraction=self.config.enable_foresight_extraction or False,
                 enable_event_log_extraction=True,
             )
             
