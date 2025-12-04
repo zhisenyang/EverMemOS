@@ -42,10 +42,10 @@ class ResultValidator:
         print(f"  - 找到 {len(memcells)} 个 MemCell")
 
         if memcells:
-            total_semantic = sum(
-                len(m.semantic_memories)
+            total_foresight = sum(
+                len(m.foresight_memories)
                 for m in memcells
-                if hasattr(m, 'semantic_memories') and m.semantic_memories
+                if hasattr(m, 'foresight_memories') and m.foresight_memories
             )
             total_eventlog = sum(
                 len(
@@ -58,7 +58,7 @@ class ResultValidator:
             )
 
             print(f"  - episode: {len(memcells)} 个")
-            print(f"  - semantic_memories: {total_semantic} 个")
+            print(f"  - foresight_memories: {total_foresight} 个")
             print(f"  - event_log atomic_facts: {total_eventlog} 个")
 
         # 验证 Milvus
