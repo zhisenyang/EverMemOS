@@ -131,7 +131,6 @@ class MilvusCollectionBase:
     _DB_USING: Optional[str] = "default"
 
     # 类级别的实例缓存
-    _collection_name: Optional[str] = None
     _collection_instance: Optional[Collection] = None
     _async_collection_instance: Optional[AsyncCollection] = None
 
@@ -144,8 +143,6 @@ class MilvusCollectionBase:
 
         # 使用类属性 _DB_USING，如果未定义则使用 "default"
         self._using = self._DB_USING if self._DB_USING is not None else "default"
-        # 缓存 collection 描述，避免属性在 __init__ 外首次定义
-        self._collection_desc: Optional[Dict[str, Any]] = None
 
     @classmethod
     def collection(cls) -> Collection:
@@ -173,19 +170,13 @@ class MilvusCollectionBase:
         return self._COLLECTION_NAME
 
     @property
-    def real_name(self) -> str:
-        if self._collection_name:
-            return self._collection_name
-        else:
-            raise ValueError("Collection 名称未获取，请先调用 ensure_collection_desc()")
-
-    @property
     def using(self) -> str:
         """获取连接别名"""
         return self._DB_USING if self._DB_USING is not None else "default"
 
-    def load_collection(self, name: str) -> Collection:
+    def load_collection(self) -> Collection:
         """加载 Collection（内部方法）"""
+        name = self.name
         if not utility.has_collection(name, using=self.using):
             raise ValueError(f"Collection '{name}' 不存在")
 
@@ -202,22 +193,25 @@ class MilvusCollectionBase:
         """确保 Collection 已加载到内存（类级别缓存）"""
         # 懒加载 Collection
         if self.__class__._collection_instance is None:
-            self.__class__._collection_instance = self.load_collection(self.name)
+            self.__class__._collection_instance = self.load_collection()
 
         coll = self.__class__._collection_instance
 
+        name = coll.name
+        using = coll.using
+
         try:
-            load_state = utility.load_state(coll.name, using=self.using)
+            load_state = utility.load_state(name, using=using)
 
             if load_state == LoadState.NotLoad:
-                logger.info("Collection '%s' 未加载，正在加载到内存...", self.name)
+                logger.info("Collection '%s' 未加载，正在加载到内存...", name)
                 coll.load()
-                logger.info("Collection '%s' 加载成功", self.name)
+                logger.info("Collection '%s' 加载成功", name)
             elif load_state == LoadState.Loading:
-                logger.info("Collection '%s' 正在加载中，等待加载完成...", self.name)
+                logger.info("Collection '%s' 正在加载中，等待加载完成...", name)
                 coll.load()
             else:
-                logger.info("Collection '%s' 已加载", self.name)
+                logger.info("Collection '%s' 已加载", name)
 
         except Exception as e:
             logger.error("加载 Collection 时出错: %s", e)
@@ -231,7 +225,7 @@ class MilvusCollectionBase:
 
         # 懒加载 Collection
         if self._collection_instance is None:
-            self._collection_instance = self.load_collection(self.name)
+            self._collection_instance = self.load_collection()
 
         coll = self._collection_instance
         self._create_indexes_for_collection(coll)
@@ -298,22 +292,15 @@ class MilvusCollectionBase:
         conn = collection_._get_connection()
         return conn.describe_collection(collection_.name)
 
-    def ensure_collection_desc(self) -> Dict[str, Any]:
-        collection_desc = self._get_collection_desc(self._collection_instance)
-        self._collection_desc = collection_desc
-        self._collection_name = collection_desc.get("collection_name")
-
     def ensure_all(self) -> None:
         """
         一键完成所有初始化操作
 
         执行顺序：
         1. ensure_loaded(): 加载到内存
-        2. ensure_collection_desc(): 获取 Collection 描述
         """
         self.ensure_loaded()
-        self.ensure_collection_desc()
-        logger.info("Collection '%s' 初始化完成，真实名: %s", self.name, self.real_name)
+        logger.info("Collection '%s' 初始化完成", self.name)
 
 
 class MilvusCollectionWithSuffix(MilvusCollectionBase):
@@ -404,13 +391,14 @@ class MilvusCollectionWithSuffix(MilvusCollectionBase):
         """获取 Collection 名称"""
         return self._alias_name
 
-    def load_collection(self, name: str) -> Collection:
+    def load_collection(self) -> Collection:
         """
         加载或创建 Collection（内部方法）
 
         覆盖基类方法，增加创建逻辑
         """
         # 先探测 alias 是否存在
+        name = self.name
 
         if not utility.has_collection(name, using=self._using):
             # Collection 不存在，创建新的带时间戳的 Collection
@@ -448,7 +436,7 @@ class MilvusCollectionWithSuffix(MilvusCollectionBase):
         此方法会触发 Collection 的懒加载，如果 alias 不存在则创建新 Collection
         """
         if self._collection_instance is None:
-            self._collection_instance = self.load_collection(self._alias_name)
+            self._collection_instance = self.load_collection()
         logger.info("Collection '%s' 已就绪", self.name)
 
     def ensure_all(self) -> None:
@@ -463,11 +451,21 @@ class MilvusCollectionWithSuffix(MilvusCollectionBase):
         logger.info("开始初始化 Collection '%s'", self.name)
 
         self.ensure_create()
-        self.ensure_collection_desc()
         self.ensure_indexes()
         self.ensure_loaded()
 
-        logger.info("Collection '%s' 初始化完成，真实名: %s", self.name, self.real_name)
+        # 获取并打印真实的 collection 名称
+        try:
+            collection_desc = self._get_collection_desc(self._collection_instance)
+            real_collection_name = collection_desc.get("collection_name", "unknown")
+            logger.info(
+                "Collection '%s' 初始化完成，真实名: %s",
+                self.name,
+                real_collection_name,
+            )
+        except Exception as e:
+            logger.warning("获取真实 collection 名称失败: %s", e)
+            logger.info("Collection '%s' 初始化完成", self.name)
 
     def create_new_collection(self) -> Collection:
         """
@@ -553,7 +551,6 @@ class MilvusCollectionWithSuffix(MilvusCollectionBase):
             self.__class__._collection_instance = Collection(
                 name=alias_name, using=self._using
             )
-            self.ensure_collection_desc()
         except Exception:
             pass
 
@@ -620,7 +617,6 @@ if __name__ == "__main__":
     collection = TestCollection(suffix="zhanghui")
     collection.ensure_all()
     assert collection.name == "test_zhanghui"
-    assert collection.real_name != "test_zhanghui"
 
     class TestCollection2(MilvusCollectionBase):
         _COLLECTION_NAME = "test_zhanghui"
@@ -653,13 +649,7 @@ if __name__ == "__main__":
     collection2 = TestCollection2()
     collection2.ensure_all()
     assert collection2.name == "test_zhanghui"
-    assert collection2.real_name != "test_zhanghui"
 
-    assert collection2.real_name == collection.real_name
-
-    import ipdb
-
-    ipdb.set_trace()
     import asyncio
 
     asyncio.run(TestCollection.async_collection().insert([[1, 2, 3], [4, 5, 6]]))

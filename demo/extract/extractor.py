@@ -1,6 +1,6 @@
-"""记忆提取核心逻辑
+"""Memory Extraction Core Logic
 
-使用 V3 API 进行记忆提取。
+Use V3 API for memory extraction.
 """
 
 from typing import Dict, Any, List
@@ -17,36 +17,36 @@ from demo.utils import ensure_mongo_beanie_ready
 
 
 class MemoryExtractor:
-    """记忆提取器 - 使用 V3 API"""
+    """Memory Extractor - Using V3 API"""
 
     def __init__(self, config: ExtractModeConfig, mongo_config: MongoDBConfig):
-        """初始化提取器
+        """Initialize Extractor
 
         Args:
-            config: 提取配置
-            mongo_config: MongoDB 配置
+            config: Extraction config
+            mongo_config: MongoDB config
         """
         self.config = config
         self.mongo_config = mongo_config
         self.manager: MemoryManager | None = None
 
     async def initialize(self) -> None:
-        """初始化 MongoDB 和 MemoryManager"""
+        """Initialize MongoDB and MemoryManager"""
         await ensure_mongo_beanie_ready(self.mongo_config)
         self.manager = MemoryManager()
         self.config.output_dir.mkdir(parents=True, exist_ok=True)
 
     @staticmethod
     def normalize_message(entry: Dict[str, Any]) -> Dict[str, Any] | None:
-        """归一化消息格式
+        """Normalize message format
 
         Args:
-            entry: 原始消息字典
+            entry: Original message dictionary
 
         Returns:
-            归一化后的消息字典，如果必填字段缺失则返回 None
+            Normalized message dictionary, or None if required fields are missing
         """
-        # 提取时间戳
+        # Extract timestamp
         timestamp = (
             entry.get("create_time")
             or entry.get("createTime")
@@ -64,7 +64,7 @@ class MemoryExtractor:
         else:
             return None
 
-        # 提取发言人名称
+        # Extract speaker name
         speaker_name = entry.get("sender_name") or entry.get("sender")
         if not speaker_name:
             origin = entry.get("origin")
@@ -73,7 +73,7 @@ class MemoryExtractor:
         if not speaker_name:
             return None
 
-        # 提取发言人 ID
+        # Extract speaker ID
         raw_speaker_id = None
         origin = entry.get("origin")
         if isinstance(origin, dict):
@@ -89,36 +89,36 @@ class MemoryExtractor:
         }
 
     async def extract_from_events(self, events: List[Dict[str, Any]]) -> int:
-        """从事件列表中提取记忆
+        """Extract memories from event list
 
         Args:
-            events: 对话事件列表
+            events: Conversation event list
 
         Returns:
-            提取的 MemCell 数量
+            Number of extracted MemCells
         """
         if not self.manager:
-            raise RuntimeError("请先调用 initialize() 初始化提取器")
+            raise RuntimeError("Please call initialize() first")
 
         print("=" * 80)
-        print("使用 V3 API 提取记忆")
+        print("Extracting memories using V3 API")
         print("=" * 80)
-        print(f"\n✓ 场景类型: {self.config.scenario_type.value}")
-        print(f"✓ 语言: {self.config.prompt_language}")
-        print(f"✓ 群组 ID: {self.config.group_id}")
-        print(f"✓ 语义提取: {self.config.enable_semantic_extraction}")
-        print(f"\n开始处理 {len(events)} 条消息...\n")
+        print(f"\n✓ Scenario Type: {self.config.scenario_type.value}")
+        print(f"✓ Language: {self.config.prompt_language}")
+        print(f"✓ Group ID: {self.config.group_id}")
+        print(f"✓ Foresight Extraction: {self.config.enable_foresight_extraction}")
+        print(f"\nProcessing {len(events)} messages...\n")
 
         history: List[RawData] = []
         saved_count = 0
 
         for idx, entry in enumerate(events):
-            # 归一化消息
+            # Normalize message
             message_payload = self.normalize_message(entry)
             if not message_payload:
                 continue
 
-            # 提取消息 ID
+            # Extract message ID
             message_id = (
                 entry.get("message_id")
                 or entry.get("id")
@@ -127,19 +127,19 @@ class MemoryExtractor:
                 or f"msg_{idx}"
             )
 
-            # 创建 RawData
+            # Create RawData
             raw_item = RawData(
                 content=message_payload,
                 data_id=str(message_id),
                 data_type=RawDataType.CONVERSATION,
             )
 
-            # 初始化历史
+            # Initialize history
             if not history:
                 history.append(raw_item)
                 continue
 
-            # 构建请求
+            # Build request
             request = MemorizeRequest(
                 history_raw_data_list=list(history),
                 new_raw_data_list=[raw_item],
@@ -147,19 +147,18 @@ class MemoryExtractor:
                 user_id_list=["default"],
                 group_id=self.config.group_id,
                 group_name=self.config.group_name,
-                enable_semantic_extraction=self.config.enable_semantic_extraction
-                or False,
+                enable_foresight_extraction=self.config.enable_foresight_extraction or False,
                 enable_event_log_extraction=True,
             )
 
-            # 调用 V3 API
+            # Call V3 API
             try:
                 result = await self.manager.memorize(request)
 
                 if result:
                     saved_count += 1
                     print(
-                        f"  [{saved_count:3d}] ✅ 提取成功，返回 {len(result)} 个 Memory"
+                        f"  [{saved_count:3d}] ✅ Extraction successful, returned {len(result)} Memories"
                     )
                     history = [raw_item]
                 else:
@@ -168,11 +167,11 @@ class MemoryExtractor:
                         history = history[-self.config.history_window_size :]
 
             except Exception as e:
-                print(f"\n⚠️ 提取失败: {e}")
+                print(f"\n⚠️ Extraction failed: {e}")
                 history.append(raw_item)
                 if len(history) > self.config.history_window_size:
                     history = history[-self.config.history_window_size :]
                 continue
 
-        print(f"\n✅ 处理完成，共提取 {saved_count} 个 MemCell")
+        print(f"\n✅ Processing complete, extracted {saved_count} MemCells")
         return saved_count
