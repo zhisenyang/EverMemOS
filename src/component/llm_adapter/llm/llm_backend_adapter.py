@@ -7,16 +7,16 @@ from component.llm_adapter.llm.completion import (
 
 
 class LLMBackendAdapter(ABC):
-    """LLM后端适配器抽象基类"""
+    """Abstract base class for LLM backend adapter"""
 
     @abstractmethod
     async def chat_completion(
         self, request: ChatCompletionRequest
     ) -> Union[ChatCompletionResponse, AsyncGenerator[str, None]]:
-        """执行聊天完成"""
+        """Perform chat completion"""
         pass
 
     @abstractmethod
     def get_available_models(self) -> List[str]:
-        """获取可用模型列表"""
+        """Get list of available models"""
         pass
