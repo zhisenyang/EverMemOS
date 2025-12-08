@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 def generate_new_collection_name(alias: str) -> str:
-    """基于别名生成带时间戳的新集合名称。"""
+    """Generate a new collection name with timestamp based on alias."""
     now = get_now_with_timezone()
     return f"{alias}_{now.strftime('%Y%m%d%H%M%S%f')}"
 
@@ -22,19 +22,19 @@ def generate_new_collection_name(alias: str) -> str:
 @dataclass
 class IndexConfig:
     """
-    索引配置类
+    Index configuration class
 
-    用于定义需要创建的索引（支持向量索引和标量索引）
+    Used to define indexes to be created (supports vector and scalar indexes)
 
     Attributes:
-        field_name: 字段名
-        index_type: 索引类型（如 IVF_FLAT, HNSW, AUTOINDEX 等）
-        metric_type: 度量类型（向量索引必需，如 L2, COSINE, IP）
-        params: 索引参数（可选）
-        index_name: 索引名称（可选，不指定则自动生成）
+        field_name: Field name
+        index_type: Index type (e.g., IVF_FLAT, HNSW, AUTOINDEX, etc.)
+        metric_type: Metric type (required for vector indexes, e.g., L2, COSINE, IP)
+        params: Index parameters (optional)
+        index_name: Index name (optional, auto-generated if not specified)
 
-    示例：
-        # 向量索引
+    Examples:
+        # Vector index
         IndexConfig(
             field_name="embedding",
             index_type="IVF_FLAT",
@@ -42,7 +42,7 @@ class IndexConfig:
             params={"nlist": 128}
         )
 
-        # 标量索引
+        # Scalar index
         IndexConfig(
             field_name="title",
             index_type="AUTOINDEX"
@@ -56,7 +56,7 @@ class IndexConfig:
     index_name: Optional[str] = None
 
     def to_index_params(self) -> Dict[str, Any]:
-        """转换为 pymilvus 的索引参数格式"""
+        """Convert to pymilvus index parameter format"""
         result = {"index_type": self.index_type}
         if self.metric_type:
             result["metric_type"] = self.metric_type
@@ -67,14 +67,14 @@ class IndexConfig:
 
 def get_collection_suffix(suffix: Optional[str] = None) -> str:
     """
-    获取 Collection 名称后缀，用于多租户场景
+    Get Collection name suffix, used in multi-tenant scenarios
 
     Args:
-        suffix: 显式传入的后缀，如果提供则直接返回
-               如果不提供，从环境变量 SELF_MILVUS_COLLECTION_NS 读取
+        suffix: Explicitly provided suffix; if given, return directly.
+               If not provided, read from environment variable SELF_MILVUS_COLLECTION_NS
 
     Returns:
-        Collection 后缀字符串，如果都未设置则返回空字符串
+        Collection suffix string; return empty string if neither is set
     """
     if suffix is not None:
         return suffix
@@ -83,102 +83,102 @@ def get_collection_suffix(suffix: Optional[str] = None) -> str:
 
 class MilvusCollectionBase:
     """
-    Milvus Collection 基础管理类
+    Milvus Collection base management class
 
-    职责：
-    1. 管理 Collection 的基本信息（名称、Schema、索引配置）
-    2. 提供懒加载的 Collection 实例（内部缓存）
-    3. 提供工具方法（ensure_indexes、ensure_loaded）
+    Responsibilities:
+    1. Manage basic Collection information (name, Schema, index configuration)
+    2. Provide lazily loaded Collection instance (internally cached)
+    3. Provide utility methods (ensure_indexes, ensure_loaded)
 
-    适用场景：
-    - 简单的 Collection 管理
-    - 只读数据源（由其他团队管理，只需要查询）
-    - 不需要 suffix、时间戳、alias 等复杂逻辑
+    Applicable scenarios:
+    - Simple Collection management
+    - Read-only data sources (managed by other teams, only querying needed)
+    - No need for suffix, timestamp, alias, or other complex logic
 
-    使用方式：
-    1. 子类定义：
-       - _COLLECTION_NAME: Collection 名称（必需）
-       - _SCHEMA: Collection Schema（可选）
-       - _INDEX_CONFIGS: 索引配置列表（可选）
-       - _DB_USING: Milvus 连接别名（可选，默认 "default"）
+    Usage:
+    1. Subclass defines:
+       - _COLLECTION_NAME: Collection name (required)
+       - _SCHEMA: Collection Schema (optional)
+       - _INDEX_CONFIGS: List of index configurations (optional)
+       - _DB_USING: Milvus connection alias (optional, default "default")
 
-    2. 实例化：
-       mgr = MovieCollection()  # 使用类定义的 _DB_USING
-       # 或
-       mgr = MovieCollection(using="custom_db")  # 覆盖类定义
+    2. Instantiation:
+       mgr = MovieCollection()  # Use class-defined _DB_USING
+       # or
+       mgr = MovieCollection(using="custom_db")  # Override class definition
 
-    3. 使用：
-       mgr.ensure_loaded()  # 加载到内存
-       mgr.collection.search(...)  # 使用 Collection
+    3. Usage:
+       mgr.ensure_loaded()  # Load into memory
+       mgr.collection.search(...)  # Use Collection
 
-    示例：
-        # 只读场景（数据源由其他团队管理）
+    Example:
+        # Read-only scenario (data source managed by other team)
         class ReadOnlyMovieCollection(MilvusCollectionBase):
-            _COLLECTION_NAME = "external_movies"  # 固定的 Collection 名称
-            _DB_USING = "external_db"  # 使用外部数据库连接
+            _COLLECTION_NAME = "external_movies"  # Fixed Collection name
+            _DB_USING = "external_db"  # Use external database connection
 
         mgr = ReadOnlyMovieCollection()
         mgr.ensure_loaded()
         results = mgr.collection.search(...)
     """
 
-    # 子类必须定义的属性
+    # Attributes that subclasses must define
     _COLLECTION_NAME: Optional[str] = None
 
-    # 子类可选定义的属性
+    # Optional attributes that subclasses may define
     _SCHEMA: Optional[CollectionSchema] = None
     _INDEX_CONFIGS: Optional[List[IndexConfig]] = None
     _DB_USING: Optional[str] = "default"
 
-    # 类级别的实例缓存
+    # Class-level instance cache
     _collection_instance: Optional[Collection] = None
     _async_collection_instance: Optional[AsyncCollection] = None
 
     def __init__(self):
-        """初始化配置容器"""
+        """Initialize configuration container"""
         if not self._COLLECTION_NAME:
             raise NotImplementedError(
-                f"{self.__class__.__name__} 必须定义 '_COLLECTION_NAME' 类属性"
+                f"{self.__class__.__name__} must define '_COLLECTION_NAME' class attribute"
             )
 
-        # 使用类属性 _DB_USING，如果未定义则使用 "default"
+        # Use class attribute _DB_USING, default to "default" if not defined
         self._using = self._DB_USING if self._DB_USING is not None else "default"
 
     @classmethod
     def collection(cls) -> Collection:
-        """获取 Collection 实例（类级别缓存）"""
+        """Get Collection instance (class-level cache)"""
         if cls._collection_instance is None:
             raise ValueError(
-                f"{cls.__name__} 的 Collection 实例未创建，请先调用 ensure_loaded()"
+                f"{cls.__name__} Collection instance not created, please call ensure_loaded() first"
             )
         return cls._collection_instance
 
     @classmethod
     def async_collection(cls) -> AsyncCollection:
-        """获取异步 Collection 实例（类级别缓存）"""
+        """Get asynchronous Collection instance (class-level cache)"""
         if cls._async_collection_instance is None:
             if cls._collection_instance is None:
                 raise ValueError(
-                    f"{cls.__name__} 的 Collection 实例未创建，请先调用 ensure_loaded()"
+                    f"{cls.__name__} Collection instance not created, please call ensure_loaded() first"
                 )
             cls._async_collection_instance = AsyncCollection(cls._collection_instance)
         return cls._async_collection_instance
 
     @property
     def name(self) -> str:
-        """获取实际的 Collection 名称"""
+        """Get actual Collection name"""
         return self._COLLECTION_NAME
 
     @property
     def using(self) -> str:
-        """获取连接别名"""
+        """Get connection alias"""
         return self._DB_USING if self._DB_USING is not None else "default"
 
     def load_collection(self) -> Collection:
-        """加载 Collection（内部方法）"""
+        """Load Collection (internal method)"""
         name = self.name
         if not utility.has_collection(name, using=self.using):
-            raise ValueError(f"Collection '{name}' 不存在")
+            raise ValueError(f"Collection '{name}' does not exist")
 
         coll = Collection(
             name=name,
@@ -186,12 +186,12 @@ class MilvusCollectionBase:
             schema=self._SCHEMA,
             consistency_level=ConsistencyLevel.Bounded,
         )
-        logger.info("加载 Collection '%s'", name)
+        logger.info("Loaded Collection '%s'", name)
         return coll
 
     def ensure_loaded(self) -> None:
-        """确保 Collection 已加载到内存（类级别缓存）"""
-        # 懒加载 Collection
+        """Ensure Collection is loaded into memory (class-level cache)"""
+        # Lazy load Collection
         if self.__class__._collection_instance is None:
             self.__class__._collection_instance = self.load_collection()
 
@@ -204,26 +204,30 @@ class MilvusCollectionBase:
             load_state = utility.load_state(name, using=using)
 
             if load_state == LoadState.NotLoad:
-                logger.info("Collection '%s' 未加载，正在加载到内存...", name)
+                logger.info("Collection '%s' not loaded, loading into memory...", name)
                 coll.load()
-                logger.info("Collection '%s' 加载成功", name)
+                logger.info("Collection '%s' loaded successfully", name)
             elif load_state == LoadState.Loading:
-                logger.info("Collection '%s' 正在加载中，等待加载完成...", name)
+                logger.info(
+                    "Collection '%s' is loading, waiting for completion...", name
+                )
                 coll.load()
             else:
-                logger.info("Collection '%s' 已加载", name)
+                logger.info("Collection '%s' already loaded", name)
 
         except Exception as e:
-            logger.error("加载 Collection 时出错: %s", e)
+            logger.error("Error occurred while loading Collection: %s", e)
             raise
 
     def ensure_indexes(self) -> None:
-        """创建所有配置的索引（diff 方式）"""
+        """Create all configured indexes (diff approach)"""
         if not self._INDEX_CONFIGS:
-            logger.info("Collection '%s' 未配置索引，跳过", self.name)
+            logger.info(
+                "Collection '%s' has no index configuration, skipping", self.name
+            )
             return
 
-        # 懒加载 Collection
+        # Lazy load Collection
         if self._collection_instance is None:
             self._collection_instance = self.load_collection()
 
@@ -232,7 +236,7 @@ class MilvusCollectionBase:
 
     @staticmethod
     def _get_existing_indexes(coll: Collection) -> Dict[str, Dict[str, Any]]:
-        """获取指定 Collection 中已存在的索引信息"""
+        """Get existing index information in the specified Collection"""
         try:
             indexes_info = coll.indexes
             result = {}
@@ -247,28 +251,30 @@ class MilvusCollectionBase:
             return result
 
         except Exception as e:  # pylint: disable=broad-except
-            logger.warning("获取索引信息时出错: %s", e)
+            logger.warning("Error occurred while retrieving index information: %s", e)
             return {}
 
     def _create_indexes_for_collection(self, coll: Collection) -> None:
-        """为指定 Collection 创建缺失的索引（复用 ensure_indexes 的 diff 逻辑）"""
+        """Create missing indexes for the specified Collection (reuse diff logic from ensure_indexes)"""
         try:
             existing_indexes = self._get_existing_indexes(coll)
             existing_field_names = set(existing_indexes.keys())
 
             logger.info(
-                "Collection '%s' 已存在的索引字段: %s", coll.name, existing_field_names
+                "Existing index fields in Collection '%s': %s",
+                coll.name,
+                existing_field_names,
             )
 
             index_configs = self._INDEX_CONFIGS or []
             for index_config in index_configs:
                 field_name = index_config.field_name
                 if field_name in existing_field_names:
-                    logger.info("字段 '%s' 已有索引，跳过", field_name)
+                    logger.info("Field '%s' already has an index, skipping", field_name)
                     continue
 
                 logger.info(
-                    "为字段 '%s' 创建索引（类型: %s）...",
+                    "Creating index for field '%s' (type: %s)...",
                     field_name,
                     index_config.index_type,
                 )
@@ -280,11 +286,17 @@ class MilvusCollectionBase:
                 if index_config.index_name:
                     create_kwargs["index_name"] = index_config.index_name
                 coll.create_index(**create_kwargs)
-                logger.info("字段 '%s' 索引创建成功", field_name)
+                logger.info("Index creation for field '%s' succeeded", field_name)
 
-            logger.info("Collection '%s' 索引检查与创建完成", coll.name)
+            logger.info(
+                "Index check and creation completed for Collection '%s'", coll.name
+            )
         except Exception as e:
-            logger.error("为 Collection '%s' 创建索引时出错: %s", coll.name, e)
+            logger.error(
+                "Error occurred while creating indexes for Collection '%s': %s",
+                coll.name,
+                e,
+            )
             raise
 
     @staticmethod
@@ -294,54 +306,54 @@ class MilvusCollectionBase:
 
     def ensure_all(self) -> None:
         """
-        一键完成所有初始化操作
+        Complete all initialization operations in one step
 
-        执行顺序：
-        1. ensure_loaded(): 加载到内存
+        Execution order:
+        1. ensure_loaded(): Load into memory
         """
         self.ensure_loaded()
-        logger.info("Collection '%s' 初始化完成", self.name)
+        logger.info("Collection '%s' initialization completed", self.name)
 
 
 class MilvusCollectionWithSuffix(MilvusCollectionBase):
     """
-    带 Suffix 和 Alias 机制的 Milvus Collection 管理类
+    Milvus Collection management class with Suffix and Alias mechanism
 
-    继承自 MilvusCollectionBase，增加：
-    1. 动态表名：支持通过 suffix 或环境变量动态设置表名后缀（多租户场景）
-    2. Alias 机制：真实表名带时间戳，通过 alias 访问（方便后续切换）
+    Inherits from MilvusCollectionBase, adds:
+    1. Dynamic table name: Supports dynamically setting table name suffix via suffix or environment variable (multi-tenant scenario)
+    2. Alias mechanism: Real table name includes timestamp, accessed via alias (convenient for future switching)
        - Alias: {base_name}_{suffix}
-       - 真实名: {base_name}_{suffix}-{timestamp}
-    3. 创建管理：提供 ensure_create、ensure_all 等方法
+       - Real name: {base_name}_{suffix}-{timestamp}
+    3. Creation management: Provides methods like ensure_create, ensure_all
 
-    适用场景：
-    - 多租户场景，需要为不同客户创建独立的 Collection
-    - 需要版本管理，保留历史 Collection
-    - 需要灰度切换，通过 alias 切换不同版本
+    Applicable scenarios:
+    - Multi-tenant scenarios requiring independent Collections for different customers
+    - Need version management, retaining historical Collections
+    - Need gray-scale switching, switching between different versions via alias
 
-    使用方式：
-    1. 子类定义：
-       - _BASE_NAME: Collection 的基础名称（必需）
-       - _SCHEMA: Collection 的 Schema 定义（必需）
-       - _INDEX_CONFIGS: 索引配置列表（可选）
-       - _DB_USING: Milvus 连接别名（可选，默认 "default"）
+    Usage:
+    1. Subclass defines:
+       - _BASE_NAME: Base name of the Collection (required)
+       - _SCHEMA: Schema definition of the Collection (required)
+       - _INDEX_CONFIGS: List of index configurations (optional)
+       - _DB_USING: Milvus connection alias (optional, default "default")
 
-    2. 实例化：
+    2. Instantiation:
        mgr = MovieCollection(suffix="customer_a")
        # Alias: movies_customer_a
-       # 真实名: movies_customer_a-20231015123456789000
+       # Real name: movies_customer_a-20231015123456789000
 
-       # 或指定数据库连接
+       # Or specify database connection
        mgr = MovieCollection(suffix="customer_a", using="custom_db")
 
-    3. 初始化：
-       mgr.ensure_all()  # 一键初始化
+    3. Initialization:
+       mgr.ensure_all()  # One-step initialization
 
-    4. 使用：
+    4. Usage:
        mgr.collection.insert([...])
        mgr.collection.search(...)
 
-    示例：
+    Example:
         class MovieCollection(MilvusCollectionWithSuffix):
             _BASE_NAME = "movies"
             _SCHEMA = CollectionSchema(fields=[...])
@@ -349,9 +361,9 @@ class MilvusCollectionWithSuffix(MilvusCollectionBase):
                 IndexConfig(field_name="embedding", index_type="IVF_FLAT", ...),
                 IndexConfig(field_name="year", index_type="AUTOINDEX")
             ]
-            _DB_USING = "my_milvus"  # 可选：指定默认数据库连接
+            _DB_USING = "my_milvus"  # Optional: specify default database connection
 
-        # 使用
+        # Usage
         mgr = MovieCollection(suffix="customer_a")
         mgr.ensure_all()
         mgr.collection.insert([...])
@@ -359,131 +371,133 @@ class MilvusCollectionWithSuffix(MilvusCollectionBase):
 
     def __init__(self, suffix: Optional[str] = None):
         """
-        初始化配置容器
+        Initialize configuration container
 
         Args:
-            suffix: Collection 名称后缀，如果不提供则从环境变量 SELF_MILVUS_COLLECTION_NS 读取
+            suffix: Collection name suffix; if not provided, read from environment variable SELF_MILVUS_COLLECTION_NS
         """
         if not self._COLLECTION_NAME:
             raise NotImplementedError(
-                f"{self.__class__.__name__} 必须定义 '_COLLECTION_NAME' 类属性"
+                f"{self.__class__.__name__} must define '_COLLECTION_NAME' class attribute"
             )
 
         if not self._SCHEMA:
             raise NotImplementedError(
-                f"{self.__class__.__name__} 必须定义 '_SCHEMA' 类属性（创建场景必需）"
+                f"{self.__class__.__name__} must define '_SCHEMA' class attribute (required for creation scenarios)"
             )
 
-        # 获取 suffix（支持传参或从环境变量获取）
+        # Get suffix (supports parameter or environment variable)
         self._suffix = get_collection_suffix(suffix)
 
-        # 构造 alias 名称
+        # Construct alias name
         if self._suffix:
             self._alias_name = f"{self._COLLECTION_NAME}_{self._suffix}"
         else:
             self._alias_name = self._COLLECTION_NAME
 
-        # 调用基类初始化
+        # Call parent class initialization
         super().__init__()
 
     @property
     def name(self) -> str:
-        """获取 Collection 名称"""
+        """Get Collection name"""
         return self._alias_name
 
     def load_collection(self) -> Collection:
         """
-        加载或创建 Collection（内部方法）
+        Load or create Collection (internal method)
 
-        覆盖基类方法，增加创建逻辑
+        Override parent method, add creation logic
         """
-        # 先探测 alias 是否存在
+        # First check if alias exists
         name = self.name
 
         if not utility.has_collection(name, using=self._using):
-            # Collection 不存在，创建新的带时间戳的 Collection
+            # Collection does not exist, create a new timestamped Collection
             _collection_name = generate_new_collection_name(name)
 
             logger.info(
-                "Collection '%s' 不存在，创建新 Collection: %s", name, _collection_name
+                "Collection '%s' does not exist, creating new Collection: %s",
+                name,
+                _collection_name,
             )
 
-            # 创建 Collection
+            # Create Collection
             Collection(
                 name=_collection_name,
                 schema=self._SCHEMA,
                 using=self._using,
-                consistency_level=ConsistencyLevel.Bounded,  # 默认 bounded 一致性
+                consistency_level=ConsistencyLevel.Bounded,  # Default bounded consistency
             )
 
-            # 创建 alias 指向新 Collection
-            # 删除指向的实际 Collection的时候，alias并不会自动删除，需要先删除alias
+            # Create alias pointing to new Collection
+            # When deleting the actual Collection, the alias is not automatically deleted, so delete alias first
             utility.drop_alias(name, using=self._using)
             utility.create_alias(
                 collection_name=_collection_name, alias=name, using=self._using
             )
-            logger.info("已创建 Alias '%s' -> '%s'", name, _collection_name)
+            logger.info("Created Alias '%s' -> '%s'", name, _collection_name)
 
-        # 统一通过 alias 加载（无论已存在还是新创建）
+        # Uniformly load via alias (whether existing or newly created)
         coll = Collection(name=name, using=self._using)
 
         return coll
 
     def ensure_create(self) -> None:
         """
-        确保 Collection 已创建
+        Ensure Collection has been created
 
-        此方法会触发 Collection 的懒加载，如果 alias 不存在则创建新 Collection
+        This method triggers lazy loading of the Collection; if alias does not exist, create a new Collection
         """
         if self._collection_instance is None:
             self._collection_instance = self.load_collection()
-        logger.info("Collection '%s' 已就绪", self.name)
+        logger.info("Collection '%s' is ready", self.name)
 
     def ensure_all(self) -> None:
         """
-        一键完成所有初始化操作
+        Complete all initialization operations in one step
 
-        执行顺序：
-        1. ensure_create(): 创建 Collection 和 alias
-        2. ensure_indexes(): 创建所有配置的索引
-        3. ensure_loaded(): 加载到内存
+        Execution order:
+        1. ensure_create(): Create Collection and alias
+        2. ensure_indexes(): Create all configured indexes
+        3. ensure_loaded(): Load into memory
         """
-        logger.info("开始初始化 Collection '%s'", self.name)
+        logger.info("Starting initialization of Collection '%s'", self.name)
 
         self.ensure_create()
         self.ensure_indexes()
         self.ensure_loaded()
 
-        # 获取并打印真实的 collection 名称
+        # Retrieve and print the actual collection name
         try:
             collection_desc = self._get_collection_desc(self._collection_instance)
             real_collection_name = collection_desc.get("collection_name", "unknown")
             logger.info(
-                "Collection '%s' 初始化完成，真实名: %s",
+                "Collection '%s' initialization completed, real name: %s",
                 self.name,
                 real_collection_name,
             )
         except Exception as e:
-            logger.warning("获取真实 collection 名称失败: %s", e)
-            logger.info("Collection '%s' 初始化完成", self.name)
+            logger.warning("Failed to retrieve real collection name: %s", e)
+            logger.info("Collection '%s' initialization completed", self.name)
 
     def create_new_collection(self) -> Collection:
         """
-        创建一个新的真实 Collection（不切换 alias）。
-        - 使用类定义的 `_SCHEMA` 创建新集合
-        - 按 `_INDEX_CONFIGS` 为新集合创建索引并 load
+        Create a new real Collection (without switching alias).
+        - Create new collection using class-defined `_SCHEMA`
+        - Create indexes and load for new collection according to `_INDEX_CONFIGS`
 
         Returns:
-            新集合实例（已创建索引并 load）
+            New collection instance (indexes created and loaded)
         """
         if not self._SCHEMA:
             raise NotImplementedError(
-                f"{self.__class__.__name__} 必须定义 '_SCHEMA' 以支持集合创建"
+                f"{self.__class__.__name__} must define '_SCHEMA' to support collection creation"
             )
 
         alias_name = self._alias_name
 
-        # 创建新集合
+        # Create new collection
         new_real_name = generate_new_collection_name(alias_name)
         Collection(
             name=new_real_name,
@@ -492,26 +506,29 @@ class MilvusCollectionWithSuffix(MilvusCollectionBase):
             consistency_level=ConsistencyLevel.Bounded,
         )
 
-        # 为新集合创建索引
+        # Create indexes for new collection
         try:
             new_coll = Collection(name=new_real_name, using=self._using)
             self._create_indexes_for_collection(new_coll)
             new_coll.load()
         except Exception as e:
-            logger.warning("为新集合创建索引时出错，可忽略: %s", e)
+            logger.warning(
+                "Error occurred while creating indexes for new collection, can be ignored: %s",
+                e,
+            )
 
         return new_coll
 
     def switch_alias(self, new_collection: Collection, drop_old: bool = False) -> None:
         """
-        将 alias 切换到指定的新集合，并可选删除旧集合。
-        - 优先 alter_alias，失败则走 drop/create
-        - 切换后刷新类级缓存
+        Switch alias to the specified new collection, optionally delete old collection.
+        - Prefer alter_alias; if fails, fall back to drop/create
+        - Refresh class-level cache after switching
         """
         alias_name = self._alias_name
         new_real_name = new_collection.name
 
-        # 获取旧集合真实名（若存在）
+        # Get old collection real name (if exists)
         old_real_name: Optional[str] = None
         try:
             conn = connections._fetch_handler(self._using)
@@ -522,13 +539,13 @@ class MilvusCollectionWithSuffix(MilvusCollectionBase):
         except Exception:
             old_real_name = None
 
-        # 别名切换
+        # Alias switching
         try:
             conn = connections._fetch_handler(self._using)
             conn.alter_alias(new_real_name, alias_name)
-            logger.info("已将别名 '%s' 切换至 '%s'", alias_name, new_real_name)
+            logger.info("Alias '%s' switched to '%s'", alias_name, new_real_name)
         except Exception as e:
-            logger.warning("alter_alias 失败，尝试 drop/create: %s", e)
+            logger.warning("alter_alias failed, attempting drop/create: %s", e)
             try:
                 utility.drop_alias(alias_name, using=self._using)
             except Exception:
@@ -536,17 +553,19 @@ class MilvusCollectionWithSuffix(MilvusCollectionBase):
             utility.create_alias(
                 collection_name=new_real_name, alias=alias_name, using=self._using
             )
-            logger.info("已创建别名 '%s' -> '%s'", alias_name, new_real_name)
+            logger.info("Created alias '%s' -> '%s'", alias_name, new_real_name)
 
-        # 可选删除旧集合（在切换完成之后执行）
+        # Optionally delete old collection (after switching completes)
         if drop_old and old_real_name:
             try:
                 utility.drop_collection(old_real_name, using=self._using)
-                logger.info("已删除旧集合: %s", old_real_name)
+                logger.info("Deleted old collection: %s", old_real_name)
             except Exception as e:
-                logger.warning("删除旧集合失败（可手动处理）: %s", e)
+                logger.warning(
+                    "Failed to delete old collection (can be handled manually): %s", e
+                )
 
-        # 刷新类级别缓存为 alias 集合
+        # Refresh class-level cache to alias collection
         try:
             self.__class__._collection_instance = Collection(
                 name=alias_name, using=self._using
@@ -555,11 +574,11 @@ class MilvusCollectionWithSuffix(MilvusCollectionBase):
             pass
 
     def exists(self) -> bool:
-        """检查 Collection 是否存在（通过 alias）"""
+        """Check if Collection exists (via alias)"""
         return utility.has_collection(self.name, using=self._using)
 
     def drop(self) -> None:
-        """删除当前 Collection（包括 alias 和真实 Collection）"""
+        """Delete current Collection (including alias and real Collection)"""
         try:
             if not self._collection_instance:
                 self._collection_instance = Collection(
@@ -567,13 +586,19 @@ class MilvusCollectionWithSuffix(MilvusCollectionBase):
                 )
 
             real_name = self._collection_instance.name
-            logger.info("找到 Collection '%s' 对应的真实名称: %s", self.name, real_name)
+            logger.info(
+                "Found real name corresponding to Collection '%s': %s",
+                self.name,
+                real_name,
+            )
 
             utility.drop_collection(real_name, using=self._using)
-            logger.info("已删除 Collection '%s'", real_name)
+            logger.info("Deleted Collection '%s'", real_name)
 
         except Exception as e:  # pylint: disable=broad-except
-            logger.warning("Collection '%s' 不存在或删除失败: %s", self.name, e)
+            logger.warning(
+                "Collection '%s' does not exist or deletion failed: %s", self.name, e
+            )
 
 
 if __name__ == "__main__":
@@ -604,11 +629,11 @@ if __name__ == "__main__":
         _INDEX_CONFIGS = [
             IndexConfig(
                 field_name="vector",
-                index_type="HNSW",  # 高效的近似最近邻搜索
-                metric_type="COSINE",  # 欧氏距离
+                index_type="HNSW",  # Efficient approximate nearest neighbor search
+                metric_type="COSINE",  # Euclidean distance
                 params={
-                    "M": 16,  # 每个节点的最大边数
-                    "efConstruction": 200,  # 构建时的搜索宽度
+                    "M": 16,  # Maximum number of edges per node
+                    "efConstruction": 200,  # Search width during construction
                 },
             )
         ]
@@ -636,11 +661,11 @@ if __name__ == "__main__":
         _INDEX_CONFIGS = [
             IndexConfig(
                 field_name="vector",
-                index_type="HNSW",  # 高效的近似最近邻搜索
-                metric_type="COSINE",  # 欧氏距离
+                index_type="HNSW",  # Efficient approximate nearest neighbor search
+                metric_type="COSINE",  # Euclidean distance
                 params={
-                    "M": 16,  # 每个节点的最大边数
-                    "efConstruction": 200,  # 构建时的搜索宽度
+                    "M": 16,  # Maximum number of edges per node
+                    "efConstruction": 200,  # Search width during construction
                 },
             )
         ]

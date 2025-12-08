@@ -16,7 +16,7 @@ from core.constants.errors import ErrorMessage
 
 
 class AnthropicAdapter(LLMBackendAdapter):
-    """Anthropic Claude API适配器"""
+    """Anthropic Claude API adapter"""
 
     def __init__(self, config: Dict[str, Any]):
         self.config = config
@@ -41,7 +41,7 @@ class AnthropicAdapter(LLMBackendAdapter):
     async def chat_completion(
         self, request: ChatCompletionRequest
     ) -> Union[ChatCompletionResponse, AsyncGenerator[str, None]]:
-        """执行聊天完成（转换为Anthropic格式）"""
+        """Perform chat completion (convert to Anthropic format)"""
         if not request.model:
             request.model = self.config.get("default_model")
 
@@ -68,9 +68,9 @@ class AnthropicAdapter(LLMBackendAdapter):
         if request.top_p is not None:
             data["top_p"] = request.top_p
 
-        # 添加thinking配置支持
+        # Add support for thinking configuration
         if request.thinking_budget is not None and request.thinking_budget > 0:
-            # 检查模型是否支持thinking功能
+            # Check if the model supports thinking capability
             thinking_supported_models = [
                 "claude-3-5-sonnet-20241022",
                 "claude-3-7-sonnet-20241022",
@@ -110,7 +110,7 @@ class AnthropicAdapter(LLMBackendAdapter):
     def _convert_anthropic_response(
         self, response_data: Dict[str, Any], model: str
     ) -> ChatCompletionResponse:
-        """转换Anthropic响应为OpenAI格式"""
+        """Convert Anthropic response to OpenAI format"""
         return ChatCompletionResponse(
             id=response_data.get("id", ""),
             object="chat.completion",
@@ -134,7 +134,7 @@ class AnthropicAdapter(LLMBackendAdapter):
     async def _stream_chat_completion(
         self, data: Dict[str, Any]
     ) -> AsyncGenerator[str, None]:
-        """流式聊天完成"""
+        """Streamed chat completion"""
         async with self.client.stream("POST", "/v1/messages", json=data) as response:
             response.raise_for_status()
             async for line in response.aiter_lines():
@@ -150,9 +150,9 @@ class AnthropicAdapter(LLMBackendAdapter):
                         continue
 
     def get_available_models(self) -> List[str]:
-        """获取可用模型列表"""
+        """Get list of available models"""
         return self.config.get("models", [])
 
     async def close(self):
-        """关闭HTTP客户端"""
+        """Close HTTP client"""
         await self.client.aclose()

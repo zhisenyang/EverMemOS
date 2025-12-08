@@ -1,20 +1,19 @@
 from typing import Dict, Any, List, Union, AsyncGenerator
 import os
 import openai
-from core.di.decorators import service
-from component.llm_adapter.llm.llm_backend_adapter import LLMBackendAdapter
 from component.llm_adapter.llm.completion import (
     ChatCompletionRequest,
     ChatCompletionResponse,
 )
+from component.llm_adapter.llm.llm_backend_adapter import LLMBackendAdapter
 from core.constants.errors import ErrorMessage
 
 
 class OpenAIAdapter(LLMBackendAdapter):
-    """OpenAI API适配器（基于openai官方包实现）"""
+    """OpenAI API adapter (implemented based on the official openai package)"""
 
     def __init__(self, config: Dict[str, Any]):
-        # 保存配置
+        # Save configuration
         self.config = config
         self.api_key = config.get("api_key") or os.getenv("OPENAI_API_KEY")
         self.base_url = config.get("base_url") or os.getenv("OPENAI_BASE_URL")
@@ -23,7 +22,7 @@ class OpenAIAdapter(LLMBackendAdapter):
         if not self.api_key:
             raise ValueError(ErrorMessage.INVALID_PARAMETER.value)
 
-        # 实例化 openai 异步客户端
+        # Instantiate openai async client
         self.client = openai.AsyncOpenAI(
             api_key=self.api_key, base_url=self.base_url, timeout=self.timeout
         )
@@ -32,7 +31,7 @@ class OpenAIAdapter(LLMBackendAdapter):
         self, request: ChatCompletionRequest
     ) -> Union[ChatCompletionResponse, AsyncGenerator[str, None]]:
         """
-        执行聊天完成，支持流式和非流式两种方式。
+        Perform chat completion, supporting both streaming and non-streaming modes.
         """
         if not request.model:
             raise ValueError(ErrorMessage.INVALID_PARAMETER.value)
@@ -50,12 +49,12 @@ class OpenAIAdapter(LLMBackendAdapter):
             "presence_penalty": params.get("presence_penalty"),
             "stream": params.get("stream", False),
         }
-        # 移除 None 值，避免 openai 报错
+        # Remove None values to avoid openai errors
         final_params = {k: v for k, v in client_params.items() if v is not None}
 
         try:
             if final_params.get("stream"):
-                # 流式响应，返回异步生成器
+                # Streaming response, return async generator
                 async def stream_gen():
                     response_stream = await self.client.chat.completions.create(
                         **final_params
@@ -67,12 +66,12 @@ class OpenAIAdapter(LLMBackendAdapter):
 
                 return stream_gen()
             else:
-                # 非流式响应
+                # Non-streaming response
                 response = await self.client.chat.completions.create(**final_params)
                 return ChatCompletionResponse.from_dict(response.model_dump())
         except Exception as e:
             raise RuntimeError(f"OpenAI chat completion request failed: {e}")
 
     def get_available_models(self) -> List[str]:
-        """获取可用模型列表（可扩展为调用 openai 模型列表接口）"""
+        """Get available model list (can be extended to call openai model list API)"""
         return self.config.get("models", [])

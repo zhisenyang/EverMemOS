@@ -6,7 +6,7 @@ from component.llm_adapter.llm.message import ChatMessage
 
 @dataclass
 class ChatCompletionRequest:
-    """聊天完成请求数据类"""
+    """Chat completion request data class"""
 
     messages: List[ChatMessage]
     model: Optional[str] = None
@@ -15,17 +15,17 @@ class ChatCompletionRequest:
     top_p: Optional[float] = None
     frequency_penalty: Optional[float] = None
     presence_penalty: Optional[float] = None
-    thinking_budget: Optional[int] = None  # 添加thinking_budget参数支持
+    thinking_budget: Optional[int] = None  # Add support for thinking_budget parameter
     stream: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
-        """转换为字典格式"""
+        """Convert to dictionary format"""
         data = {
             "messages": [msg.to_dict() for msg in self.messages],
             "stream": self.stream,
         }
 
-        # 只添加非None的字段
+        # Only add non-None fields
         for field_name in [
             "model",
             "temperature",
@@ -43,7 +43,7 @@ class ChatCompletionRequest:
 
 
 class ChatCompletionResponse(BaseModel, extra="allow"):
-    """聊天完成响应数据类，兼容多余字段"""
+    """Chat completion response data class, compatible with extra fields"""
 
     id: str
     object: str
@@ -54,5 +54,5 @@ class ChatCompletionResponse(BaseModel, extra="allow"):
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'ChatCompletionResponse':
-        """从字典创建响应对象"""
+        """Create response object from dictionary"""
         return cls(**data)

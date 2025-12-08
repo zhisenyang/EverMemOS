@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 class GeminiAdapter(LLMBackendAdapter):
-    """Google Gemini API适配器"""
+    """Google Gemini API adapter"""
 
     def __init__(self, config: Dict[str, Any]):
         self.config = config
@@ -36,27 +36,27 @@ class GeminiAdapter(LLMBackendAdapter):
         if not self.api_key:
             raise ValueError(ErrorMessage.CONFIGURATION_MISSING.value)
 
-        # 使用新的 google.genai API
+        # Use the new google.genai API
         self.client = Client(api_key=self.api_key)
         self.model_name = self.config.get("default_model", "gemini-2.5-flash")
 
     async def chat_completion(
         self, request: ChatCompletionRequest
     ) -> Union[ChatCompletionResponse, AsyncGenerator[str, None]]:
-        """执行聊天完成（转换为Gemini格式）"""
+        """Perform chat completion (convert to Gemini format)"""
         if not request.model:
             request.model = self.model_name
 
         contents = self._convert_messages_to_gemini_format(request.messages)
 
-        # 构建GenerationConfig
+        # Build GenerationConfig
         generation_config_params = {
             "temperature": request.temperature,
             "top_p": request.top_p,
             "max_output_tokens": request.max_tokens,
         }
 
-        # 如果提供了thinking_budget参数，创建ThinkingConfig
+        # If thinking_budget parameter is provided, create ThinkingConfig
         thinking_config = None
         if request.thinking_budget is not None:
             thinking_config = ThinkingConfig(thinking_budget=request.thinking_budget)
@@ -91,7 +91,7 @@ class GeminiAdapter(LLMBackendAdapter):
     def _convert_messages_to_gemini_format(
         self, messages: List[Dict[str, Any]]
     ) -> List[ContentDict]:
-        """将消息列表转换为Gemini格式"""
+        """Convert message list to Gemini format"""
         contents = []
         for msg in messages:
             if type(msg) == HumanMessage:
@@ -117,10 +117,10 @@ class GeminiAdapter(LLMBackendAdapter):
         return contents
 
     def _convert_gemini_response(self, response, model: str) -> ChatCompletionResponse:
-        """转换Gemini响应为OpenAI格式"""
-        # Token信息由审计系统统一处理，这里不需要提取
+        """Convert Gemini response to OpenAI format"""
+        # Token information is handled uniformly by the audit system, no need to extract here
         result = ChatCompletionResponse(
-            id=f"chatcmpl-{int(time.time())}",  # Gemini不提供ID，我们自己生成一个
+            id=f"chatcmpl-{int(time.time())}",  # Gemini does not provide ID, we generate one
             object="chat.completion",
             created=int(time.time()),
             model=model,
@@ -128,13 +128,13 @@ class GeminiAdapter(LLMBackendAdapter):
                 {
                     "index": 0,
                     "message": {"role": "assistant", "content": response.text},
-                    "finish_reason": "stop",  # Gemini API v1 不直接提供 finish_reason
+                    "finish_reason": "stop",  # Gemini API v1 does not directly provide finish_reason
                 }
             ],
-            usage={},  # 空的usage，token信息由审计系统处理
+            usage={},  # empty usage, token information handled by audit system
         )
 
-        # 将原始Gemini响应对象附加到结果上，供审计系统使用
+        # Attach the original Gemini response object to the result for use by the audit system
         result._original_gemini_response = response
 
         return result
@@ -142,7 +142,7 @@ class GeminiAdapter(LLMBackendAdapter):
     async def _stream_chat_completion(
         self, contents: List[ContentDict], generation_config: GenerateContentConfig
     ) -> AsyncGenerator[str, None]:
-        """流式聊天完成"""
+        """Streamed chat completion"""
         response_stream = await self.client.aio.models.generate_content_stream(
             model=self.model_name, contents=contents, config=generation_config
         )
@@ -151,9 +151,9 @@ class GeminiAdapter(LLMBackendAdapter):
                 yield chunk.text
 
     def get_available_models(self) -> List[str]:
-        """获取可用模型列表"""
+        """Get list of available models"""
         return self.config.get("models", [])
 
     async def close(self):
-        """关闭客户端（Gemini库不需要）"""
+        """Close client (not required by Gemini library)"""
         pass
